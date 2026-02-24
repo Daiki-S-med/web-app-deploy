@@ -6,6 +6,7 @@
 # ライブラリの読み込み
 ############################################################
 import os
+import csv
 import logging
 from logging.handlers import TimedRotatingFileHandler
 from uuid import uuid4
@@ -14,6 +15,7 @@ import unicodedata
 from dotenv import load_dotenv
 import streamlit as st
 from docx import Document
+from langchain_core.documents import Document as LangchainDocument
 from langchain_community.document_loaders import WebBaseLoader
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
@@ -226,6 +228,32 @@ def recursive_file_check(path, docs_all):
         file_load(path, docs_all)
 
 
+def load_csv_as_single_doc(path):
+    """
+    CSVファイルの全行を1つのドキュメントに統合して読み込む
+
+    CSVLoaderはデフォルトで1行1ドキュメントに分割するため、
+    RETRIEVER_SEARCH_Kの上限により取得できる行数が制限される。
+    全行を1ドキュメントに統合することで、検索精度を向上させる。
+
+    Args:
+        path: CSVファイルのパス
+
+    Returns:
+        全行を統合した1つのドキュメントのリスト
+    """
+    rows_text = []
+    with open(path, encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            # 各行を「列名: 値」の形式に変換して自然言語に近い形式にする
+            row_text = "、".join([f"{k}: {v}" for k, v in row.items()])
+            rows_text.append(row_text)
+    # 全行を改行で結合して1つのドキュメントにまとめる
+    merged_text = "\n".join(rows_text)
+    return [LangchainDocument(page_content=merged_text, metadata={"source": path})]
+
+
 def file_load(path, docs_all):
     """
     ファイル内のデータ読み込み
@@ -234,7 +262,7 @@ def file_load(path, docs_all):
         path: ファイルパス
         docs_all: データソースを格納する用のリスト
     """
-    # ファイルの拡張子を取得　
+    # ファイルの拡張子を取得
     # os.path.splitext()は、ファイルパスを「ファイル名」と「拡張子」に分割する関数
     # 例えば「data.txt」というファイルパスを渡すと、[0]で名前の部分、
     # [1]で「.txt」という拡張子が取得できる
@@ -244,9 +272,13 @@ def file_load(path, docs_all):
 
     # 想定していたファイル形式の場合のみ読み込む　設定ファイル(ct)に用意したリストと照らし合わせる
     if file_extension in ct.SUPPORTED_EXTENSIONS:
-        # ファイルの拡張子に合ったdata loaderを使ってデータ読み込み
-        loader = ct.SUPPORTED_EXTENSIONS[file_extension](path)
-        docs = loader.load()
+        if file_extension == ".csv":
+            # CSVは全行を1つのドキュメントに統合して読み込む
+            docs = load_csv_as_single_doc(path)
+        else:
+            # ファイルの拡張子に合ったdata loaderを使ってデータ読み込み
+            loader = ct.SUPPORTED_EXTENSIONS[file_extension](path)
+            docs = loader.load()
         docs_all.extend(docs)
 
 
